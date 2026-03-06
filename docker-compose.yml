@@ -1,0 +1,54 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: postgres-local
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama
+    container_name: ollama-local
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  mongodb:
+    image: mongo:7
+    container_name: mongodb-local
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: mongo
+      MONGO_INITDB_ROOT_PASSWORD: mongo
+      MONGO_INITDB_DATABASE: admin
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+
+  pgvector-search:
+    build: .
+    container_name: pgvector-search
+    depends_on:
+      - postgres
+      - ollama
+    environment:
+      DATABASE_URL: "host=postgres dbname=postgres user=postgres password=postgres port=5432"
+      OLLAMA_HOST: "http://ollama:11434"
+    profiles:
+      - tools
+
+volumes:
+  postgres_data:
+  mongo_data:
+  ollama_data:
