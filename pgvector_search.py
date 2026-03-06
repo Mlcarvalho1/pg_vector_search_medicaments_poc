@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Semantic search on meta_medicaments using pgvector + Ollama (nomic-embed-text).
+Semantic and hybrid search on meta_medicaments using pgvector + Ollama.
 
 Usage:
   python pgvector_search.py backfill
   python pgvector_search.py search "antibiotico para criancas"
-  python pgvector_search.py search "hipertensao arterial"
+  python pgvector_search.py search-hybrid "antibiotico para criancas"
 
 Requirements:
   pip install psycopg2-binary ollama
-  ollama pull nomic-embed-text
+  ollama pull nomic-embed-text-8k
 """
 
 import sys
@@ -38,6 +38,7 @@ TEXT_FIELDS = [
     "characteristics",
     "adverse_reactions",
     "recommendations",
+    "ai_enrichment",
 ]
 
 
@@ -65,7 +66,8 @@ def backfill(conn):
     cur.execute(
         """
         SELECT id, name, description, indications, contraindications,
-               composition, characteristics, adverse_reactions, recommendations
+               composition, characteristics, adverse_reactions, recommendations,
+               ai_enrichment
         FROM meta_medicaments
         WHERE embedding IS NULL
           AND is_deleted = false
@@ -141,8 +143,69 @@ def search(conn, query: str, limit: int = 10):
         print(f"{rank:<5} {similarity:<12.4f} {row_id:<10} {name}  —  {desc_preview}")
 
 
+def search_hybrid(conn, query: str, limit: int = 10):
+    """
+    Combines pgvector semantic search and tsvector full-text search using
+    Reciprocal Rank Fusion (RRF, k=60). Results appear even when only one
+    source finds a match, covering both sparse and rich rows.
+    """
+    embedding = get_embedding(query)
+    vec_str = str(embedding)
+
+    cur = conn.cursor()
+    cur.execute(
+        """
+        WITH semantic AS (
+            SELECT id,
+                   ROW_NUMBER() OVER (ORDER BY embedding <=> %s::vector) AS rank
+            FROM meta_medicaments
+            WHERE is_deleted = false
+              AND embedding IS NOT NULL
+            LIMIT 200
+        ),
+        fts AS (
+            SELECT id,
+                   ROW_NUMBER() OVER (ORDER BY ts_rank(indice_pesquisa, query) DESC) AS rank
+            FROM meta_medicaments,
+                 plainto_tsquery('portuguese', %s) query
+            WHERE is_deleted = false
+              AND indice_pesquisa @@ query
+            LIMIT 200
+        ),
+        rrf AS (
+            SELECT
+                COALESCE(s.id, f.id) AS id,
+                COALESCE(1.0 / (60 + s.rank), 0) +
+                COALESCE(1.0 / (60 + f.rank), 0) AS score
+            FROM semantic s
+            FULL OUTER JOIN fts f ON s.id = f.id
+        )
+        SELECT m.id, m.name, m.description, r.score
+        FROM rrf r
+        JOIN meta_medicaments m ON m.id = r.id
+        ORDER BY r.score DESC
+        LIMIT %s
+        """,
+        (vec_str, query, limit),
+    )
+    results = cur.fetchall()
+    cur.close()
+
+    if not results:
+        print("No results found.")
+        return
+
+    print(f"\nTop {len(results)} hybrid results for: \"{query}\"\n")
+    print(f"{'Rank':<5} {'RRF Score':<12} {'ID':<10} Name / Description")
+    print("-" * 80)
+    for rank, (row_id, name, description, score) in enumerate(results, start=1):
+        desc_preview = (description or "")[:60].replace("\n", " ")
+        print(f"{rank:<5} {score:<12.4f} {row_id:<10} {name}  —  {desc_preview}")
+
+
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in ("backfill", "search"):
+    commands = ("backfill", "search", "search-hybrid")
+    if len(sys.argv) < 2 or sys.argv[1] not in commands:
         print(__doc__)
         sys.exit(1)
 
@@ -153,12 +216,15 @@ def main():
     try:
         if command == "backfill":
             backfill(conn)
-        elif command == "search":
+        elif command in ("search", "search-hybrid"):
             if len(sys.argv) < 3:
-                print("Usage: python pgvector_search.py search <query>")
+                print(f"Usage: python pgvector_search.py {command} <query>")
                 sys.exit(1)
             query = " ".join(sys.argv[2:])
-            search(conn, query)
+            if command == "search":
+                search(conn, query)
+            else:
+                search_hybrid(conn, query)
     finally:
         conn.close()
 

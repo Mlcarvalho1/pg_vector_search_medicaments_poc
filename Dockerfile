@@ -5,5 +5,6 @@ WORKDIR /app
 RUN pip install --no-cache-dir psycopg2-binary ollama
 
 COPY pgvector_search.py .
+COPY llm_enrich.py .
 
 ENTRYPOINT ["python", "pgvector_search.py"]
