@@ -25,20 +25,15 @@ DB_DSN = os.environ.get(
     "host=localhost dbname=postgres user=postgres password=postgres port=5432",
 )
 
-OLLAMA_MODEL = "nomic-embed-text-8k"
+OLLAMA_MODEL = "nomic-embed-text"
 BATCH_SIZE = 50
 
 # Columns used to build the text that will be embedded
 TEXT_FIELDS = [
     "name",
-    "description",
-    "indications",
-    "contraindications",
     "composition",
-    "characteristics",
-    "adverse_reactions",
-    "recommendations",
-    "ai_enrichment",
+    "ai_description",
+    "ai_tags",
 ]
 
 
@@ -65,12 +60,12 @@ def backfill(conn):
 
     cur.execute(
         """
-        SELECT id, name, description, indications, contraindications,
-               composition, characteristics, adverse_reactions, recommendations,
-               ai_enrichment
+        SELECT id, name, composition, ai_description, ai_tags
         FROM meta_medicaments
         WHERE embedding IS NULL
           AND is_deleted = false
+          AND ai_description IS NOT NULL
+          AND ai_tags IS NOT NULL
         """
     )
     rows = cur.fetchall()

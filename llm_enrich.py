@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
-LLM enrichment for sparse rows in meta_medicaments.
+LLM enrichment for meta_medicaments.
 
-Generates a Portuguese pharmacological description for rows that have no
-description, indications, or adverse_reactions — storing the result in the
-ai_enrichment column and resetting embedding so the backfill re-embeds them.
+Generates two AI fields for every non-deleted row:
+  ai_description  — technical pharmacological text (for professional searches)
+  ai_tags         — colloquial terms and use cases (for patient searches)
 
 Usage:
-  docker compose run --rm pgvector-search python llm_enrich.py
+  docker compose --profile tools run --rm pgvector-search llm_enrich.py
 
 Requirements:
   ollama pull llama3.2   (run once in the ollama container)
 """
 
 import os
-import sys
+import re
 import psycopg2
 import ollama
 
@@ -28,27 +28,35 @@ BATCH_SIZE = 10
 
 _client = ollama.Client(host=OLLAMA_HOST)
 
-PROMPT_TEMPLATE = """\
-Você é um farmacêutico especialista. Com base apenas no nome e composição do medicamento abaixo, escreva em português um texto curto (máximo 150 palavras) cobrindo:
-- Classe terapêutica
-- Principais indicações clínicas
-- Perfil do paciente (adulto, criança, idoso, gestante...)
-- Contraindicações mais comuns
+PROMPT_DESCRIPTION = """\
+Você é um farmacêutico especialista. Com base no nome e composição abaixo, escreva em português um parágrafo técnico-farmacêutico (máximo 120 palavras) cobrindo classe terapêutica, mecanismo de ação, indicações clínicas e contraindicações principais. Responda apenas com o parágrafo, sem títulos nem marcadores.
 
-Responda apenas com o texto descritivo, sem títulos ou marcadores.
+Medicamento: {name}
+Composição: {composition}
+"""
 
-Nome: {name}
+PROMPT_TAGS = """\
+Você é um farmacêutico especialista. Com base no nome e composição abaixo, liste em português termos separados por vírgula que um paciente usaria para buscar este medicamento: nomes populares da doença tratada, sintomas, situações de uso cotidiano, perfis de paciente. Responda apenas com os termos separados por vírgula, sem frases, sem títulos, sem marcadores.
+
+Medicamento: {name}
 Composição: {composition}
 """
 
 
-def enrich_row(name: str, composition: str) -> str:
-    prompt = PROMPT_TEMPLATE.format(
-        name=name or "",
-        composition=composition or "",
-    )
-    response = _client.generate(model=LLM_MODEL, prompt=prompt)
+def _generate(prompt: str) -> str:
+    response = _client.generate(model=LLM_MODEL, prompt=prompt, options={"num_predict": 200})
     return response["response"].strip()
+
+
+def enrich_row(name: str, composition: str) -> tuple[str, str]:
+    name = name or ""
+    composition = composition or ""
+    description = _generate(PROMPT_DESCRIPTION.format(name=name, composition=composition))
+    tags_raw = _generate(PROMPT_TAGS.format(name=name, composition=composition))
+    # Normalize bullet points to comma-separated just in case
+    tags_cleaned = re.sub(r"[\•\-\*]\s*", "", tags_raw)
+    tags = ", ".join(t.strip() for t in re.split(r"[,\n]+", tags_cleaned) if t.strip())
+    return description, tags
 
 
 def enrich(conn):
@@ -59,49 +67,46 @@ def enrich(conn):
         SELECT id, name, composition
         FROM meta_medicaments
         WHERE is_deleted = false
-          AND ai_enrichment IS NULL
-          AND (description IS NULL OR description = '')
-          AND (indications IS NULL OR indications = '')
-          AND (adverse_reactions IS NULL OR adverse_reactions = '')
+          AND (ai_description IS NULL OR ai_tags IS NULL)
         ORDER BY id
         """
     )
     rows = cur.fetchall()
 
     if not rows:
-        print("No sparse rows to enrich.")
+        print("All rows already enriched.")
         return
 
-    print(f"Enriching {len(rows)} sparse rows with {LLM_MODEL}…")
+    print(f"Enriching {len(rows)} rows with {LLM_MODEL}…")
     batch = 0
 
     for i, (row_id, name, composition) in enumerate(rows, start=1):
         try:
-            text = enrich_row(name, composition)
+            description, tags = enrich_row(name, composition)
         except Exception as e:
             print(f"  [{i}/{len(rows)}] id={row_id} — LLM error: {e}")
             continue
 
-        # Store enrichment and reset embedding so backfill re-embeds this row
         cur.execute(
             """
             UPDATE meta_medicaments
-            SET ai_enrichment = %s,
+            SET ai_description = %s,
+                ai_tags = %s,
                 embedding = NULL
             WHERE id = %s
             """,
-            (text, row_id),
+            (description, tags, row_id),
         )
 
         batch += 1
         if batch % BATCH_SIZE == 0:
             conn.commit()
-            print(f"  committed batch at row {i}")
+            print(f"  committed batch at row {i}/{len(rows)}")
 
         print(f"  [{i}/{len(rows)}] id={row_id} — {name}")
 
     conn.commit()
-    print("Enrichment complete. Run backfill to re-embed the updated rows.")
+    print("Enrichment complete. Run backfill to embed the updated rows.")
     cur.close()
 
 
