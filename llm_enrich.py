@@ -15,8 +15,10 @@ Requirements:
 
 import os
 import re
+import threading
 import psycopg2
 import ollama
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 DB_DSN = os.environ.get(
     "DATABASE_URL",
@@ -25,6 +27,7 @@ DB_DSN = os.environ.get(
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 LLM_MODEL = "llama3.2"
 BATCH_SIZE = 10
+MAX_WORKERS = 3
 
 _client = ollama.Client(host=OLLAMA_HOST)
 
@@ -77,33 +80,55 @@ def enrich(conn):
         print("All rows already enriched.")
         return
 
-    print(f"Enriching {len(rows)} rows with {LLM_MODEL}…")
+    total = len(rows)
+    print(f"Enriching {total} rows with {LLM_MODEL} (workers={MAX_WORKERS})…")
+
+    cache: dict[tuple[str, str], tuple[str, str]] = {}
+    cache_lock = threading.Lock()
+
+    def process_row(row):
+        row_id, name, composition = row
+        key = (name or "", composition or "")
+        with cache_lock:
+            if key in cache:
+                return row_id, name, cache[key], True
+        result = enrich_row(name, composition)
+        with cache_lock:
+            cache.setdefault(key, result)
+        return row_id, name, result, False
+
+    completed = 0
     batch = 0
 
-    for i, (row_id, name, composition) in enumerate(rows, start=1):
-        try:
-            description, tags = enrich_row(name, composition)
-        except Exception as e:
-            print(f"  [{i}/{len(rows)}] id={row_id} — LLM error: {e}")
-            continue
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {executor.submit(process_row, row): row for row in rows}
+        for future in as_completed(futures):
+            completed += 1
+            try:
+                row_id, name, (description, tags), cached = future.result()
+            except Exception as e:
+                row = futures[future]
+                print(f"  [{completed}/{total}] id={row[0]} — LLM error: {e}")
+                continue
 
-        cur.execute(
-            """
-            UPDATE meta_medicaments
-            SET ai_description = %s,
-                ai_tags = %s,
-                embedding = NULL
-            WHERE id = %s
-            """,
-            (description, tags, row_id),
-        )
+            cur.execute(
+                """
+                UPDATE meta_medicaments
+                SET ai_description = %s,
+                    ai_tags = %s,
+                    embedding = NULL
+                WHERE id = %s
+                """,
+                (description, tags, row_id),
+            )
 
-        batch += 1
-        if batch % BATCH_SIZE == 0:
-            conn.commit()
-            print(f"  committed batch at row {i}/{len(rows)}")
+            batch += 1
+            if batch % BATCH_SIZE == 0:
+                conn.commit()
+                print(f"  committed batch at row {completed}/{total}")
 
-        print(f"  [{i}/{len(rows)}] id={row_id} — {name}")
+            suffix = " (cached)" if cached else ""
+            print(f"  [{completed}/{total}] id={row_id} — {name}{suffix}")
 
     conn.commit()
     print("Enrichment complete. Run backfill to embed the updated rows.")
