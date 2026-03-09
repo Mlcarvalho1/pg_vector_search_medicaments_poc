@@ -63,6 +63,13 @@ services:
     depends_on:
       - api
     restart: unless-stopped
+    networks:
+      - default
+      - dokploy-network
+
+networks:
+  dokploy-network:
+    external: true
 
 volumes:
   postgres_data:
