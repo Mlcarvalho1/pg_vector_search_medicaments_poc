@@ -15,24 +15,33 @@ services:
     restart: unless-stopped
 
   ollama:
-    image: ollama/ollama:rocm
+    image: ollama/ollama:latest
     container_name: ollama-local
     ports:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
-    privileged: true
-    devices:
-      - /dev/kfd:/dev/kfd
-      - /dev/dri/card1:/dev/dri/card1
-      - /dev/dri/renderD128:/dev/dri/renderD128
-    group_add:
-      - "105"
-      - "39"
     environment:
-      HSA_OVERRIDE_GFX_VERSION: "11.0.2"
       OLLAMA_NUM_PARALLEL: "5"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  ollama-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ollama_data:/root/.ollama
+    entrypoint: ["ollama", "pull", "nomic-embed-text"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    restart: on-failure
 
   mongodb:
     image: mongo:7
@@ -53,8 +62,10 @@ services:
       dockerfile: Dockerfile
     container_name: pgvector-search
     depends_on:
-      - postgres
-      - ollama
+      postgres:
+        condition: service_started
+      ollama:
+        condition: service_healthy
     environment:
       DATABASE_URL: "host=postgres dbname=postgres user=postgres password=postgres port=5432"
       OLLAMA_HOST: "http://ollama:11434"
@@ -69,8 +80,10 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      - postgres
-      - ollama
+      postgres:
+        condition: service_started
+      ollama:
+        condition: service_healthy
     environment:
       DATABASE_URL: "host=postgres dbname=postgres user=postgres password=postgres port=5432"
       OLLAMA_HOST: "http://ollama:11434"
