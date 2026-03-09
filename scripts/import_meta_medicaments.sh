@@ -8,12 +8,16 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CSV_FILE="${1:-$SCRIPT_DIR/../meta_medicaments.csv}"
 
 echo "Copying files into container..."
-docker cp "$SCRIPT_DIR/../db/01_migrate_meta_medicaments.sql" "$CONTAINER:/tmp/migrate_meta_medicaments.sql"
+for f in "$SCRIPT_DIR"/../db/*.sql; do
+    docker cp "$f" "$CONTAINER:/tmp/$(basename "$f")"
+done
 docker cp "$CSV_FILE" "$CONTAINER:/tmp/meta_medicaments.csv"
 
-echo "Creating table..."
-docker exec "$CONTAINER" psql -U "$PGUSER" -d "$PGDATABASE" \
-    -f /tmp/migrate_meta_medicaments.sql
+echo "Running migrations..."
+for f in "$SCRIPT_DIR"/../db/*.sql; do
+    docker exec "$CONTAINER" psql -U "$PGUSER" -d "$PGDATABASE" \
+        -f "/tmp/$(basename "$f")"
+done
 
 echo "Importing CSV (via temp table to skip manufacturer_id)..."
 docker exec -i "$CONTAINER" psql -U "$PGUSER" -d "$PGDATABASE" <<'SQL'
