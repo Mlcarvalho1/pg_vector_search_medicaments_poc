@@ -56,6 +56,16 @@ services:
       OLLAMA_HOST: "http://ollama:11434"
     restart: unless-stopped
 
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   ollama_data:
