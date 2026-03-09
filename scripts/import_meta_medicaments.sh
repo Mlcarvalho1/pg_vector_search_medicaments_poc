@@ -5,10 +5,10 @@ CONTAINER="${CONTAINER:-postgres-local}"
 PGUSER="${PGUSER:-postgres}"
 PGDATABASE="${PGDATABASE:-postgres}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CSV_FILE="${1:-$SCRIPT_DIR/meta_medicaments.csv}"
+CSV_FILE="${1:-$SCRIPT_DIR/../meta_medicaments.csv}"
 
 echo "Copying files into container..."
-docker cp "$SCRIPT_DIR/migrate_meta_medicaments.sql" "$CONTAINER:/tmp/migrate_meta_medicaments.sql"
+docker cp "$SCRIPT_DIR/../db/01_migrate_meta_medicaments.sql" "$CONTAINER:/tmp/migrate_meta_medicaments.sql"
 docker cp "$CSV_FILE" "$CONTAINER:/tmp/meta_medicaments.csv"
 
 echo "Creating table..."

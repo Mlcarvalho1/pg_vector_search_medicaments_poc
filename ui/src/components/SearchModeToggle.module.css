@@ -1,0 +1,31 @@
+.toggle {
+  display: inline-flex;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.btn {
+  padding: 8px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  border: none;
+  background: #fff;
+  color: #374151;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn:not(:last-child) {
+  border-right: 1px solid #d1d5db;
+}
+
+.btn.active {
+  background: #2563eb;
+  color: #fff;
+}

@@ -1,0 +1,48 @@
+.card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 14px 18px;
+  transition: box-shadow 0.15s;
+}
+
+.card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.rank {
+  font-size: 12px;
+  font-weight: 700;
+  color: #9ca3af;
+  min-width: 28px;
+}
+
+.name {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.score {
+  font-size: 12px;
+  font-weight: 600;
+  background: #eff6ff;
+  color: #2563eb;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.description {
+  margin: 8px 0 0 38px;
+  font-size: 13px;
+  color: #6b7280;
+  line-height: 1.5;
+}
