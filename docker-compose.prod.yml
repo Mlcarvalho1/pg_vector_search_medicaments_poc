@@ -60,8 +60,6 @@ services:
     build:
       context: ./ui
       dockerfile: Dockerfile
-    ports:
-      - "3001:80"
     depends_on:
       - api
     restart: unless-stopped
