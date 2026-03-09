@@ -27,7 +27,7 @@ DB_DSN = os.environ.get(
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 LLM_MODEL = "llama3.2"
 BATCH_SIZE = 10
-MAX_WORKERS = 3
+MAX_WORKERS = 5
 
 _client = ollama.Client(host=OLLAMA_HOST)
 

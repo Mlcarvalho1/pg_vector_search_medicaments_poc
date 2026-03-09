@@ -14,8 +14,34 @@ Requirements:
 
 import sys
 import os
+import re
 import psycopg2
 import ollama
+
+# Patterns that indicate an ingredient to exclude from results.
+# Captures the substance name after the trigger phrase.
+_EXCLUSION_PATTERNS = [
+    r'al[eé]rgic[oa]s?\s+a\s+([\w]+)',
+    r'alergia\s+a\s+([\w]+)',
+    r'intoler[aâ]nte\s+a\s+([\w]+)',
+    r'n[aã]o\s+(?:pod[eo]|consig[ao])\s+tomar?\s+([\w]+)',
+]
+
+
+def extract_exclusions(query: str) -> list[str]:
+    """Return substances to exclude found in phrases like 'alérgico a dipirona'."""
+    exclusions = []
+    for pattern in _EXCLUSION_PATTERNS:
+        for match in re.finditer(pattern, query, re.IGNORECASE):
+            exclusions.append(match.group(1))
+    return exclusions
+
+
+def clean_query(query: str) -> str:
+    """Remove exclusion phrases from the query so FTS doesn't match the allergen."""
+    for pattern in _EXCLUSION_PATTERNS:
+        query = re.sub(pattern, '', query, flags=re.IGNORECASE)
+    return re.sub(r'\s+', ' ', query).strip()
 
 # ---------------------------------------------------------------------------
 # Connection — adjust to your local Postgres setup
@@ -141,30 +167,45 @@ def search(conn, query: str, limit: int = 10):
 def search_hybrid(conn, query: str, limit: int = 10):
     """
     Combines pgvector semantic search and tsvector full-text search using
-    Reciprocal Rank Fusion (RRF, k=60). Results appear even when only one
-    source finds a match, covering both sparse and rich rows.
+    Reciprocal Rank Fusion (RRF, k=60). Phrases like 'alérgico a dipirona'
+    are detected and used to exclude matching products from results.
     """
+    exclusions = extract_exclusions(query)
+    fts_query = clean_query(query)
+
+    if exclusions:
+        print(f"Excluding substances: {', '.join(exclusions)}")
+
     embedding = get_embedding(query)
     vec_str = str(embedding)
 
+    # Build exclusion SQL fragment
+    exclusion_sql = ""
+    exclusion_params = []
+    for substance in exclusions:
+        exclusion_sql += " AND NOT (indice_pesquisa @@ plainto_tsquery('portuguese', unaccent(%s)))"
+        exclusion_params.append(substance)
+
     cur = conn.cursor()
     cur.execute(
-        """
+        f"""
         WITH semantic AS (
             SELECT id,
                    ROW_NUMBER() OVER (ORDER BY embedding <=> %s::vector) AS rank
             FROM meta_medicaments
             WHERE is_deleted = false
               AND embedding IS NOT NULL
+              {exclusion_sql}
             LIMIT 200
         ),
         fts AS (
             SELECT id,
                    ROW_NUMBER() OVER (ORDER BY ts_rank(indice_pesquisa, query) DESC) AS rank
             FROM meta_medicaments,
-                 plainto_tsquery('portuguese', %s) query
+                 plainto_tsquery('portuguese', unaccent(%s)) query
             WHERE is_deleted = false
               AND indice_pesquisa @@ query
+              {exclusion_sql}
             LIMIT 200
         ),
         rrf AS (
@@ -181,7 +222,7 @@ def search_hybrid(conn, query: str, limit: int = 10):
         ORDER BY r.score DESC
         LIMIT %s
         """,
-        (vec_str, query, limit),
+        [vec_str] + exclusion_params + [fts_query] + exclusion_params + [limit],
     )
     results = cur.fetchall()
     cur.close()

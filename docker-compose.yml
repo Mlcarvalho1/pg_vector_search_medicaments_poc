@@ -31,7 +31,7 @@ services:
       - "39"
     environment:
       HSA_OVERRIDE_GFX_VERSION: "11.0.2"
-      OLLAMA_NUM_PARALLEL: "3"
+      OLLAMA_NUM_PARALLEL: "5"
     restart: unless-stopped
 
   mongodb:
