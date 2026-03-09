@@ -50,13 +50,16 @@ CREATE TEMP TABLE meta_medicaments_tmp (
     composition text,
     characteristics text,
     physical_form text,
-    manufacturer_id integer,
     administration_via character varying(255),
     is_deleted boolean,
     ans character varying(25),
     indice_pesquisa tsvector,
     opensearch_index character varying(255),
-    is_antimicrobial boolean
+    is_antimicrobial boolean,
+    ai_enrichment text,
+    embedding text,
+    ai_description text,
+    ai_tags text
 );
 
 COPY meta_medicaments_tmp FROM '/tmp/meta_medicaments.csv'
@@ -70,7 +73,8 @@ INSERT INTO meta_medicaments (
     contraindications, pregnancy, lactation, recommendations, exams,
     posology, composition, characteristics, physical_form,
     administration_via, is_deleted, ans, indice_pesquisa,
-    opensearch_index, is_antimicrobial
+    opensearch_index, is_antimicrobial, ai_enrichment,
+    embedding, ai_description, ai_tags
 )
 SELECT
     id, name, presentation, description, classification, drug_leaflet,
@@ -80,7 +84,8 @@ SELECT
     contraindications, pregnancy, lactation, recommendations, exams,
     posology, composition, characteristics, physical_form,
     administration_via, is_deleted, ans, indice_pesquisa,
-    opensearch_index, is_antimicrobial
+    opensearch_index, is_antimicrobial, ai_enrichment,
+    NULLIF(embedding, '')::vector, ai_description, ai_tags
 FROM meta_medicaments_tmp;
 
 SELECT setval(pg_get_serial_sequence('meta_medicaments', 'id'), MAX(id)) FROM meta_medicaments;
